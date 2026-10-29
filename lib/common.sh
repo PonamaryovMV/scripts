@@ -5,6 +5,12 @@
 set -Eeuo pipefail
 
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# install-tools.sh ставит CLI сюда — скрипты находят их, даже если PATH шелла не настроен
+case ":$PATH:" in
+  *":${HOME}/.local/bin:"*) ;;
+  *) export PATH="${HOME}/.local/bin:${PATH}" ;;
+esac
 WORKSPACE_DIR="$(cd "${SCRIPTS_DIR}/.." && pwd)"
 
 # .env (не коммитится) переопределяет значения по умолчанию

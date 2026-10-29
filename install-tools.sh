@@ -31,10 +31,13 @@ fetch "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"  
 fetch "https://github.com/argoproj/argo-cd/releases/download/${ARGOCD_VERSION}/argocd-linux-${ARCH}" "$BIN_DIR/argocd"
 fetch "https://github.com/akuity/kargo/releases/download/${KARGO_VERSION}/kargo-linux-${ARCH}"     "$BIN_DIR/kargo"
 
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *) warn "Добавьте ${BIN_DIR} в PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc" ;;
-esac
+# Скрипты стенда находят ~/.local/bin сами; это нужно, только чтобы звать kubectl/kind руками
+if [[ ":$(bash -lc 'echo $PATH' 2>/dev/null):" != *":$BIN_DIR:"* ]]; then
+  rc="$HOME/.bashrc"
+  [[ "${SHELL:-}" == */zsh ]] && rc="$HOME/.zshrc"
+  warn "Для ручного запуска kubectl/kind добавьте в PATH:"
+  warn "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${rc} && source ${rc}"
+fi
 
 for bin in openssl git; do
   command -v "$bin" >/dev/null || warn "Не найден ${bin}: sudo apt-get install -y ${bin}"
