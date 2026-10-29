@@ -102,6 +102,9 @@ ensure_cluster() {
     kind create cluster --name "$CLUSTER_NAME" --config "${SCRIPTS_DIR}/config/kind-config.yaml" --wait 180s
   fi
 
+  # kind говорит Ready раньше, чем API стабильно отвечает снаружи — ждём явно
+  wait_for "API кластера отвечает на 127.0.0.1:6550" 180 kc get --raw /readyz
+
   if [[ "$(docker inspect -f '{{json .NetworkSettings.Networks.kind}}' "$REGISTRY_NAME")" == "null" ]]; then
     docker network connect kind "$REGISTRY_NAME"
   fi

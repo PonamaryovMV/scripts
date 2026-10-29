@@ -46,6 +46,18 @@ fi
 
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 
+# Если в шелле задан HTTP(S)_PROXY, kubectl/curl пошли бы через него даже на 127.0.0.1
+# (симптом: "TLS handshake timeout" к API kind). Локальные адреса — всегда напрямую.
+NO_PROXY="${NO_PROXY:-${no_proxy:-}}"
+for _h in 127.0.0.1 localhost "$REGISTRY_NAME" .svc .cluster.local; do
+  case ",${NO_PROXY}," in
+    *",${_h},"*) ;;
+    *) NO_PROXY="${NO_PROXY:+${NO_PROXY},}${_h}" ;;
+  esac
+done
+unset _h
+export NO_PROXY no_proxy="$NO_PROXY"
+
 # ---------- логирование ----------
 if [[ -t 1 ]]; then
   C_RESET=$'\e[0m'; C_BLUE=$'\e[34m'; C_GREEN=$'\e[32m'; C_YELLOW=$'\e[33m'; C_RED=$'\e[31m'
