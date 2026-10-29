@@ -157,8 +157,7 @@ ensure_secrets() {
   kc create namespace kargo-shared-resources --dry-run=client -o yaml | kc apply -f - >/dev/null
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     kc -n kargo-shared-resources create secret generic github-creds \
-      --from-literal=repoURL="^https://github\\.com/${GITHUB_OWNER}/.*" \
-      --from-literal=repoURLIsRegex=true \
+      --from-literal=repoURL="https://github.com/${GITHUB_OWNER}/gitops-main.git" \
       --from-literal=username="${GITHUB_USER:-$GITHUB_OWNER}" \
       --from-literal=password="$GITHUB_TOKEN" \
       --dry-run=client -o yaml \

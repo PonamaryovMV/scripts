@@ -182,14 +182,14 @@ metadata:
   labels:
     kargo.akuity.io/cred-type: git
 stringData:
-  repoURL: '^https://github\.com/$GithubOwner/.*'
-  repoURLIsRegex: 'true'
+  repoURL: 'https://github.com/$GithubOwner/gitops-main.git'
   username: '$user'
   password: '$($env:GITHUB_TOKEN)'
 "@
     $yaml | kubectl --context $Context apply -f - | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет github-creds" }
-    Ok "секрет kargo-shared-resources/github-creds"
+    if (-not (Test-Cmd kubectl --context $Context -n kargo-shared-resources get secret github-creds)) { Fail "Секрет github-creds не появился" }
+    Ok "секрет kargo-shared-resources/github-creds (доступ на запись в gitops-main)"
   } else {
     Warn "GITHUB_TOKEN не задан (scripts\.env) — Kargo не сможет коммитить в gitops-main"
   }
