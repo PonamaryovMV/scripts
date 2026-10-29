@@ -27,6 +27,33 @@ tune_wsl() {
   fi
 }
 
+# Кто держит TCP-порт на хосте: контейнер Docker или процесс WSL/Linux
+port_owner() {
+  local port="$1" c p
+  c="$(docker ps --filter "publish=${port}" --format '{{.Names}} ({{.Image}})' | head -1)"
+  if [[ -n "$c" ]]; then echo "контейнер ${c}"; return 0; fi
+  if command -v ss >/dev/null; then
+    p="$(ss -Hltnp "sport = :${port}" 2>/dev/null | head -1)"
+    if [[ -n "$p" ]]; then echo "процесс: ${p}"; return 0; fi
+  fi
+  return 1
+}
+
+check_ports() {
+  local busy=() port owner ports=()
+  [[ "$(docker inspect -f '{{.State.Running}}' "$REGISTRY_NAME" 2>/dev/null || true)" == "true" ]] \
+    || ports+=("$REGISTRY_HOST_PORT")
+  kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME" \
+    || ports+=(6550 8080 8081 8101 8102 8103 8111 8112 8113)
+  for port in "${ports[@]}"; do
+    if owner="$(port_owner "$port")"; then busy+=("  ${port} ← ${owner}"); fi
+  done
+  if ((${#busy[@]})); then
+    printf '%s\n' "${busy[@]}" >&2
+    die "Порты заняты. Остановите их владельцев (docker rm -f <имя>) или для registry задайте REGISTRY_HOST_PORT в .env"
+  fi
+}
+
 ensure_repos() {
   local name dir
   for name in infra gitops-infra gitops-main; do
@@ -248,6 +275,7 @@ build_initial_images() {
 main() {
   check_prereqs
   tune_wsl
+  check_ports
   ensure_repos
   ensure_registry
   ensure_cluster
