@@ -211,8 +211,8 @@ function Install-ArgoCD {
   & kubectl --context $Context apply --server-side --force-conflicts -k $argocdDir *> $null
   Kc wait --for condition=established --timeout=120s crd/applications.argoproj.io crd/applicationsets.argoproj.io crd/appprojects.argoproj.io | Out-Null
   Kc apply --server-side --force-conflicts -k $argocdDir | Out-Null
-  Kc -n argocd rollout status deploy/argocd-server --timeout=300s | Out-Null
-  Kc -n argocd rollout status deploy/argocd-repo-server --timeout=300s | Out-Null
+  Kc -n argocd rollout status deploy/argocd-server --timeout=900s | Out-Null
+  Kc -n argocd rollout status deploy/argocd-repo-server --timeout=900s | Out-Null
   Ok "Argo CD запущен — дальше всё синкается из git"
 }
 

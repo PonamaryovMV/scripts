@@ -177,8 +177,8 @@ bootstrap_argocd() {
   kc wait --for condition=established --timeout=120s \
     crd/applications.argoproj.io crd/applicationsets.argoproj.io crd/appprojects.argoproj.io >/dev/null
   kc apply --server-side --force-conflicts -k "${INFRA_DIR}/argocd" >/dev/null
-  kc -n argocd rollout status deploy/argocd-server --timeout=300s >/dev/null
-  kc -n argocd rollout status deploy/argocd-repo-server --timeout=300s >/dev/null
+  kc -n argocd rollout status deploy/argocd-server --timeout=900s >/dev/null
+  kc -n argocd rollout status deploy/argocd-repo-server --timeout=900s >/dev/null
   ok "Argo CD запущен, дальше всё синкается из git"
 }
 
