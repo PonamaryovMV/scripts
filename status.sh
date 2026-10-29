@@ -12,6 +12,7 @@ ${C_GREEN}Стенд ${CLUSTER_NAME}${C_RESET}  (kubectl context: ${KUBE_CONTEXT
 
   Argo CD    http://localhost:8080      admin / ${argocd_pass:-<ещё не создан>}
   Kargo      http://localhost:8081      admin / ${KARGO_ADMIN_PASSWORD}
+  Jenkins    http://localhost:8090      admin / $(kc -n jenkins get secret jenkins -o jsonpath='{.data.jenkins-admin-password}' 2>/dev/null | base64 -d || true)
   Образы     ghcr.io/ponamaryovmv/<app> (собирает GitHub Actions в gitops-main)
 
   hello-api  dev http://localhost:8101   stage http://localhost:8102   prod http://localhost:8103

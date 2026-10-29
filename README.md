@@ -50,6 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\up.ps1
 |---|---|---|
 | Argo CD | http://localhost:8080 | `admin` / пароль печатает `up.ps1` |
 | Kargo | http://localhost:8081 | `admin` / `admin` |
+| Jenkins | http://localhost:8090 | `admin` / пароль печатает `up.ps1` |
 | hello-api | dev :8101 · stage :8102 · prod :8103 | |
 | color-web | dev :8111 · stage :8112 · prod :8113 | |
 

@@ -51,7 +51,7 @@ port_owner() {
 check_ports() {
   local busy=() port owner ports=()
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME" \
-    || ports+=(6550 8080 8081 8101 8102 8103 8111 8112 8113)
+    || ports+=(6550 8080 8081 8090 8101 8102 8103 8111 8112 8113)
   for port in "${ports[@]}"; do
     if owner="$(port_owner "$port")"; then busy+=("  ${port} ← ${owner}"); fi
   done
@@ -167,6 +167,12 @@ ensure_secrets() {
   else
     warn "GITHUB_TOKEN не задан в .env — Kargo не сможет пушить в gitops-main (промоушены упадут)"
   fi
+
+  # Токен для Jenkins (стадия Publish). Секрет нужен всегда: без него под Jenkins не стартует.
+  kc create namespace jenkins --dry-run=client -o yaml | kc apply -f - >/dev/null
+  kc -n jenkins create secret generic jenkins-github --from-literal=token="${GITHUB_TOKEN:-not-set}" \
+    --dry-run=client -o yaml | kc apply -f - >/dev/null
+  ok "секрет jenkins/jenkins-github"
 }
 
 bootstrap_argocd() {

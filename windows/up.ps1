@@ -101,7 +101,7 @@ function Install-Tools {
 }
 
 function Test-Ports {
-  $ports = @(6550, 8080, 8081, 8101, 8102, 8103, 8111, 8112, 8113)
+  $ports = @(6550, 8080, 8081, 8090, 8101, 8102, 8103, 8111, 8112, 8113)
   $busy = @()
   foreach ($p in $ports) {
     $c = Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -147,7 +147,10 @@ function Get-BcryptHash([string]$Password) {
 }
 
 function Set-Secrets {
-  $nsYaml = "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: kargo`n---`napiVersion: v1`nkind: Namespace`nmetadata:`n  name: kargo-shared-resources`n"
+  $nsYaml = ""
+  foreach ($ns in "kargo", "kargo-shared-resources", "jenkins") {
+    $nsYaml += "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: $ns`n---`n"
+  }
   $nsYaml | kubectl --context $Context apply -f - | Out-Null
 
   # admin Kargo: хэш пароля + ключ подписи токенов (в публичный git не кладём)
@@ -193,6 +196,22 @@ stringData:
   } else {
     Warn "GITHUB_TOKEN не задан (scripts\.env) — Kargo не сможет коммитить в gitops-main"
   }
+
+  # Токен для Jenkins (стадия Publish запускает сборку в GitHub Actions).
+  # Секрет нужен всегда: без него под Jenkins не стартует (смонтирован в JCasC).
+  $jToken = if ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "not-set" }
+  $yaml = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-github
+  namespace: jenkins
+stringData:
+  token: '$jToken'
+"@
+  $yaml | kubectl --context $Context apply -f - | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет jenkins-github" }
+  Ok "секрет jenkins/jenkins-github"
 }
 
 function Install-ArgoCD {
@@ -244,6 +263,15 @@ function Show-Status {
   Write-Host ""
   Write-Host "  Argo CD    http://localhost:8080   admin / $pass"
   Write-Host "  Kargo      http://localhost:8081   admin / $KargoPassword"
+  $jPass = & kubectl --context $Context -n jenkins get secret jenkins -o "jsonpath={.data.jenkins-admin-password}" 2>$null
+  if ($jPass) { $jPass = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($jPass)) } else { $jPass = "<Jenkins ещё ставится>" }
+  $mapped = (& docker port "$ClusterName-control-plane" 2>$null) -match "30090"
+  if ($mapped) {
+    Write-Host "  Jenkins    http://localhost:8090   admin / $jPass"
+  } else {
+    Write-Host "  Jenkins    kubectl -n jenkins port-forward svc/jenkins 8090:8080  → http://localhost:8090   admin / $jPass"
+    Write-Host "             (кластер создан до добавления порта 8090; после down.ps1 + up.ps1 откроется напрямую)" -ForegroundColor DarkGray
+  }
   Write-Host "  hello-api  dev :8101  stage :8102  prod :8103"
   Write-Host "  color-web  dev :8111  stage :8112  prod :8113"
   Write-Host ""

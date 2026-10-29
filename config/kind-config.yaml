@@ -15,6 +15,7 @@ nodes:
       # UI
       - { containerPort: 30080, hostPort: 8080, listenAddress: "127.0.0.1" } # Argo CD
       - { containerPort: 30081, hostPort: 8081, listenAddress: "127.0.0.1" } # Kargo
+      - { containerPort: 30090, hostPort: 8090, listenAddress: "127.0.0.1" } # Jenkins
       # hello-api: dev / stage / prod
       - { containerPort: 30101, hostPort: 8101, listenAddress: "127.0.0.1" }
       - { containerPort: 30102, hostPort: 8102, listenAddress: "127.0.0.1" }
