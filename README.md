@@ -98,7 +98,7 @@ API слушает `127.0.0.1:6550` — WSL2 пробрасывает этот �
 
 Один контейнер `kind-registry` с self-signed TLS:
 
-- с хоста: `docker push localhost:5001/<app>:<tag>` (Docker считает localhost доверенным и не проверяет сертификат);
+- с хоста: `docker push 127.0.0.1:5001/<app>:<tag>` (Docker считает 127.0.0.0/8 доверенным и не проверяет сертификат; именно `127.0.0.1`, а не `localhost` — Docker Desktop резолвит `localhost` в `::1`);
 - в кластере: `kind-registry:5000/<app>` — containerd настроен с `skip_verify`, Kargo Warehouse — с `insecureSkipTLSVerify`.
 
 TLS нужен из-за Kargo: он ходит в registry по HTTP только для `localhost` и приватных IP, а имя `kind-registry` — ни то, ни другое.

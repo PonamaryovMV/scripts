@@ -39,7 +39,7 @@ if [[ -z "$COLOR" ]]; then
   COLOR="${palette[minor % ${#palette[@]}]}"
 fi
 
-IMAGE="localhost:${REGISTRY_HOST_PORT}/${APP}:${VERSION}"
+IMAGE="127.0.0.1:${REGISTRY_HOST_PORT}/${APP}:${VERSION}"
 log "Собираю ${IMAGE} (color=${COLOR}, broken=${BROKEN})"
 docker build -q -t "$IMAGE" \
   --build-arg APP_VERSION="$VERSION" \

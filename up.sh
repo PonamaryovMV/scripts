@@ -102,7 +102,7 @@ ensure_registry() {
       -e REGISTRY_STORAGE_DELETE_ENABLED=true \
       "$REGISTRY_IMAGE" >/dev/null
   fi
-  ok "registry: push → localhost:${REGISTRY_HOST_PORT}, в кластере → ${REGISTRY_INTERNAL}"
+  ok "registry: push → 127.0.0.1:${REGISTRY_HOST_PORT}, в кластере → ${REGISTRY_INTERNAL}"
 }
 
 ensure_cluster() {
@@ -123,7 +123,7 @@ ensure_cluster() {
   # containerd: оба имени registry → https://kind-registry:5000 без проверки сертификата
   local node host dir
   for node in $(kind get nodes --name "$CLUSTER_NAME"); do
-    for host in "$REGISTRY_INTERNAL" "localhost:${REGISTRY_HOST_PORT}"; do
+    for host in "$REGISTRY_INTERNAL" "127.0.0.1:${REGISTRY_HOST_PORT}" "localhost:${REGISTRY_HOST_PORT}"; do
       dir="/etc/containerd/certs.d/${host}"
       docker exec "$node" mkdir -p "$dir"
       docker exec -i "$node" cp /dev/stdin "$dir/hosts.toml" <<EOF
@@ -144,7 +144,7 @@ metadata:
   namespace: kube-public
 data:
   localRegistryHosting.v1: |
-    host: "localhost:${REGISTRY_HOST_PORT}"
+    host: "127.0.0.1:${REGISTRY_HOST_PORT}"
     hostFromClusterNetwork: "${REGISTRY_INTERNAL}"
     help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
 EOF
@@ -272,7 +272,7 @@ wait_platform() {
 }
 
 image_exists() { # app version
-  curl -fsk "https://localhost:${REGISTRY_HOST_PORT}/v2/$1/tags/list" 2>/dev/null | grep -q "\"$2\""
+  curl -fsk "https://127.0.0.1:${REGISTRY_HOST_PORT}/v2/$1/tags/list" 2>/dev/null | grep -q "\"$2\""
 }
 
 build_initial_images() {

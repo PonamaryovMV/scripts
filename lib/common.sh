@@ -30,7 +30,7 @@ fi
 : "${GITOPS_INFRA_DIR:=${WORKSPACE_DIR}/gitops-infra}"
 : "${GITOPS_MAIN_DIR:=${WORKSPACE_DIR}/gitops-main}"
 
-# Локальный registry: снаружи (docker push) — localhost:5001,
+# Локальный registry: снаружи (docker push) — 127.0.0.1:5001 (не localhost: Docker Desktop резолвит его в ::1),
 # внутри кластера (containerd, Kargo) — kind-registry:5000.
 : "${REGISTRY_NAME:=kind-registry}"
 : "${REGISTRY_HOST_PORT:=5001}"
