@@ -14,6 +14,17 @@ check_prereqs() {
 # kind в WSL часто падает на нехватке inotify (too many open files)
 tune_wsl() {
   is_wsl || return 0
+
+  # Docker Desktop + networkingMode=mirrored: TLS к опубликованным портам из WSL виснет
+  # (из Windows при этом всё работает). Проверено на API kind — TLS handshake timeout.
+  local winhome
+  if winhome="$(windows_home)" && grep -qiE '^\s*networkingMode\s*=\s*mirrored' "${winhome}/.wslconfig" 2>/dev/null \
+     && [[ "$(docker info --format '{{.OperatingSystem}}' 2>/dev/null)" == "Docker Desktop" ]]; then
+    warn "Docker Desktop + networkingMode=mirrored в .wslconfig: kubectl из WSL не достучится до API kind."
+    warn "Уберите networkingMode=mirrored из ${winhome}/.wslconfig и выполните 'wsl --shutdown' (см. README)."
+    [[ "${IGNORE_MIRRORED:-false}" == "true" ]] || die "Остановлено. Проигнорировать: IGNORE_MIRRORED=true ./up.sh"
+  fi
+
   local watches instances
   watches=$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || echo 0)
   instances=$(sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)

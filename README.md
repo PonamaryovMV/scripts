@@ -105,8 +105,12 @@ TLS нужен из-за Kargo: он ходит в registry по HTTP тольк
 
 ## WSL: частые проблемы
 
+- **`TLS handshake timeout` к `127.0.0.1:6550` из WSL, а из Windows API отвечает** — связка Docker Desktop +
+  `networkingMode=mirrored` в `.wslconfig`. Уберите эту строку, `wsl --shutdown`, перезапустите Docker Desktop.
+  Если mirrored нужен — ставьте docker-ce внутрь WSL вместо Docker Desktop. `up.sh` сам предупреждает об этой связке.
+
 - **`too many open files` / поды kind падают** — `up.sh` поднимает лимиты inotify до перезагрузки WSL. Навсегда:
   `echo -e "fs.inotify.max_user_watches=524288\nfs.inotify.max_user_instances=512" | sudo tee /etc/sysctl.d/99-kind.conf`
 - **`$'\r': command not found`** — репозиторий склонирован из Windows с CRLF. `.gitattributes` форсит LF, но лучше клонировать внутри WSL.
-- **Lens не подключается** — проверьте `curl -k https://127.0.0.1:6550/version` из PowerShell. Если не отвечает, включите в `.wslconfig` `networkingMode=mirrored` (Windows 11) или `localhostForwarding=true`.
+- **Lens не подключается** — проверьте `curl.exe -k https://127.0.0.1:6550/version` из PowerShell. С Docker Desktop порт публикуется в Windows напрямую; с docker-ce в WSL нужен `localhostForwarding=true` (NAT) или mirrored-режим.
 - **Argo CD не видит коммит Kargo** — опрос git раз в 30с (`timeout.reconciliation`); Kargo после коммита сам запускает sync.
