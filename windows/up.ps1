@@ -119,6 +119,15 @@ function Test-Ports {
 function New-Cluster {
   $exists = (& kind get clusters 2>$null) -contains $ClusterName
   if ($exists) {
+    # kind не переживает перезапуск Docker Desktop: остановленную ноду проще пересоздать
+    $running = & docker inspect -f "{{.State.Running}}" "$ClusterName-control-plane" 2>$null
+    if ($running -ne "true") {
+      Warn "Нода кластера $ClusterName остановлена (перезапуск Docker Desktop?) — пересоздаю кластер"
+      Run kind delete cluster --name $ClusterName
+      $exists = $false
+    }
+  }
+  if ($exists) {
     Ok "kind-кластер $ClusterName уже есть"
     Run kind export kubeconfig --name $ClusterName
   } else {
