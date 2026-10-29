@@ -12,7 +12,7 @@ ${C_GREEN}Стенд ${CLUSTER_NAME}${C_RESET}  (kubectl context: ${KUBE_CONTEXT
 
   Argo CD    http://localhost:8080      admin / ${argocd_pass:-<ещё не создан>}
   Kargo      http://localhost:8081      admin / ${KARGO_ADMIN_PASSWORD}
-  Registry   127.0.0.1:${REGISTRY_HOST_PORT} (push)  →  ${REGISTRY_INTERNAL} (в кластере)
+  Образы     ghcr.io/ponamaryovmv/<app> (собирает GitHub Actions в gitops-main)
 
   hello-api  dev http://localhost:8101   stage http://localhost:8102   prod http://localhost:8103
   color-web  dev http://localhost:8111   stage http://localhost:8112   prod http://localhost:8113

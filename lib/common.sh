@@ -30,15 +30,6 @@ fi
 : "${GITOPS_INFRA_DIR:=${WORKSPACE_DIR}/gitops-infra}"
 : "${GITOPS_MAIN_DIR:=${WORKSPACE_DIR}/gitops-main}"
 
-# Локальный registry. Везде используется одно имя — kind-registry:5000 (docker-сеть kind):
-# так его видят containerd, Kargo и BuildKit-сборщик. Порт на хосте (127.0.0.1:5001) —
-# только чтобы заглянуть в каталог с WSL/Windows: curl -k https://127.0.0.1:5001/v2/_catalog
-: "${REGISTRY_NAME:=kind-registry}"
-: "${REGISTRY_HOST_PORT:=5001}"
-: "${REGISTRY_INTERNAL:=${REGISTRY_NAME}:5000}"
-: "${REGISTRY_IMAGE:=registry:3}"
-: "${BUILDER_NAME:=${CLUSTER_NAME}-builder}"
-
 : "${KARGO_ADMIN_PASSWORD:=admin}"
 : "${STATE_DIR:=${HOME}/.local/share/${CLUSTER_NAME}}"
 
@@ -51,7 +42,7 @@ KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 # Если в шелле задан HTTP(S)_PROXY, kubectl/curl пошли бы через него даже на 127.0.0.1
 # (симптом: "TLS handshake timeout" к API kind). Локальные адреса — всегда напрямую.
 NO_PROXY="${NO_PROXY:-${no_proxy:-}}"
-for _h in 127.0.0.1 localhost "$REGISTRY_NAME" .svc .cluster.local; do
+for _h in 127.0.0.1 localhost .svc .cluster.local; do
   case ",${NO_PROXY}," in
     *",${_h},"*) ;;
     *) NO_PROXY="${NO_PROXY:+${NO_PROXY},}${_h}" ;;
@@ -91,61 +82,6 @@ windows_home() {
   win="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r' || true)"
   [[ -n "$win" && "$win" != *'%USERPROFILE%'* ]] || return 1
   wslpath -u "$win"
-}
-
-# Подключает контейнер к docker-сети kind, если он ещё не в ней.
-# Подключение может потеряться при перезапуске Docker Desktop / wsl --shutdown.
-ensure_on_kind_network() {
-  local c="$1"
-  if ! docker network inspect kind -f '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | grep -qx "$c"; then
-    log "Подключаю ${c} к docker-сети kind"
-    docker network connect kind "$c"
-  fi
-}
-
-# BuildKit-сборщик в docker-сети kind: пушит прямо в kind-registry:5000
-# (self-signed сертификат registry → insecure = без проверки TLS).
-ensure_builder() {
-  if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-    # сеть kind могла быть пересоздана вместе с кластером — тогда сборщик битый
-    if docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null 2>&1; then return 0; fi
-    docker buildx rm -f "$BUILDER_NAME" >/dev/null 2>&1 || true
-  fi
-  log "Создаю BuildKit-сборщик ${BUILDER_NAME} в сети kind"
-  local cfg
-  cfg="$(mktemp)"
-  cat > "$cfg" <<EOF
-[registry."${REGISTRY_INTERNAL}"]
-  insecure = true
-EOF
-  docker buildx create --name "$BUILDER_NAME" \
-    --driver docker-container \
-    --driver-opt network=kind \
-    --buildkitd-config "$cfg" \
-    --bootstrap >/dev/null
-  rm -f "$cfg"
-}
-
-# Контейнер, в котором работает buildkitd сборщика
-builder_container() { echo "buildx_buildkit_${BUILDER_NAME}0"; }
-
-# Проверяет, что сборщик видит registry по имени; иначе печатает диагностику
-check_builder_dns() {
-  local bc; bc="$(builder_container)"
-  ensure_on_kind_network "$REGISTRY_NAME"
-  ensure_on_kind_network "$bc"
-  # нечем проверить внутри образа — не мешаем, ошибка всплывёт при push
-  docker exec "$bc" sh -c 'command -v nslookup' >/dev/null 2>&1 || return 0
-  docker exec "$bc" nslookup "$REGISTRY_NAME" >/dev/null 2>&1 && return 0
-  warn "Сборщик ${bc} не резолвит ${REGISTRY_NAME}. Состояние сети kind:"
-  docker network inspect kind -f '{{range .Containers}}  {{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}' >&2
-  warn "Сети сборщика: $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$bc")"
-  warn "Сети registry: $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$REGISTRY_NAME")"
-  die "Пришлите этот вывод — разберёмся"
-}
-
-remove_builder() {
-  docker buildx rm -f "$BUILDER_NAME" >/dev/null 2>&1 || true
 }
 
 # Ждёт, пока команда не завершится успешно (по умолчанию до 10 минут)

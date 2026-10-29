@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Удаляет kind-кластер и контекст из kubeconfig Windows.
-#   ./down.sh          — кластер удаляется, registry с образами остаётся
-#   ./down.sh --purge  — плюс registry, его volume и сертификаты
+#   ./down.sh          — удалить кластер
+#   ./down.sh --purge  — плюс остатки старой версии стенда (локальный registry, сборщик)
 source "$(dirname "$0")/lib/common.sh"
 source "${SCRIPTS_DIR}/up.sh"   # windows_kubeconfig_remove
 
@@ -19,13 +19,11 @@ if is_wsl && [[ "$WINDOWS_KUBECONFIG" != "off" ]] && winhome="$(windows_home)"; 
   ok "контекст ${KUBE_CONTEXT} убран из kubeconfig Windows"
 fi
 
-remove_builder
-
 if $PURGE; then
-  docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
+  docker rm -f kind-registry "buildx_buildkit_${CLUSTER_NAME}-builder0" >/dev/null 2>&1 || true
   docker volume rm "${CLUSTER_NAME}-registry-data" >/dev/null 2>&1 || true
   rm -rf "$STATE_DIR"
-  ok "registry и сертификаты удалены"
+  ok "остатки локального registry удалены"
 fi
 
 ok "готово"

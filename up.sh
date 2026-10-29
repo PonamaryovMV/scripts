@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Поднимает стенд: registry → kind → секреты → Argo CD (дальше всё синкает Argo CD).
+# Поднимает стенд из WSL/Linux: kind → секреты → Argo CD (дальше всё синкает Argo CD).
 # Повторный запуск безопасен: уже созданное пропускается.
 source "$(dirname "$0")/lib/common.sh"
 
-APPS=(hello-api color-web)
-INITIAL_VERSION="1.0.0"
 
 check_prereqs() {
   require docker kind kubectl openssl git curl
@@ -52,8 +50,6 @@ port_owner() {
 
 check_ports() {
   local busy=() port owner ports=()
-  [[ "$(docker inspect -f '{{.State.Running}}' "$REGISTRY_NAME" 2>/dev/null || true)" == "true" ]] \
-    || ports+=("$REGISTRY_HOST_PORT")
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME" \
     || ports+=(6550 8080 8081 8101 8102 8103 8111 8112 8113)
   for port in "${ports[@]}"; do
@@ -61,7 +57,7 @@ check_ports() {
   done
   if ((${#busy[@]})); then
     printf '%s\n' "${busy[@]}" >&2
-    die "Порты заняты. Остановите их владельцев (docker rm -f <имя>) или для registry задайте REGISTRY_HOST_PORT в .env"
+    die "Порты заняты. Остановите их владельцев (docker rm -f <имя>)"
   fi
 }
 
@@ -76,35 +72,6 @@ ensure_repos() {
   done
 }
 
-ensure_registry() {
-  local certs="${STATE_DIR}/certs"
-  mkdir -p "$certs"
-  if [[ ! -f "$certs/registry.crt" ]]; then
-    log "Генерирую self-signed сертификат для registry"
-    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -sha256 \
-      -keyout "$certs/registry.key" -out "$certs/registry.crt" \
-      -subj "/CN=${REGISTRY_NAME}" \
-      -addext "subjectAltName=DNS:${REGISTRY_NAME},DNS:localhost,IP:127.0.0.1" 2>/dev/null
-    chmod 644 "$certs/registry.key"
-  fi
-
-  if [[ "$(docker inspect -f '{{.State.Running}}' "$REGISTRY_NAME" 2>/dev/null || true)" != "true" ]]; then
-    log "Запускаю registry ${REGISTRY_NAME} на 127.0.0.1:${REGISTRY_HOST_PORT}"
-    docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
-    # TLS нужен Kargo: он ходит в registry по https (http только для localhost/частных IP),
-    # а сертификат не проверяет благодаря insecureSkipTLSVerify в Warehouse.
-    docker run -d --restart=always --name "$REGISTRY_NAME" \
-      -p "127.0.0.1:${REGISTRY_HOST_PORT}:5000" \
-      -v "$certs:/certs:ro" \
-      -v "${CLUSTER_NAME}-registry-data:/var/lib/registry" \
-      -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/registry.crt \
-      -e REGISTRY_HTTP_TLS_KEY=/certs/registry.key \
-      -e REGISTRY_STORAGE_DELETE_ENABLED=true \
-      "$REGISTRY_IMAGE" >/dev/null
-  fi
-  ok "registry ${REGISTRY_INTERNAL} (с хоста для просмотра: https://127.0.0.1:${REGISTRY_HOST_PORT})"
-}
-
 ensure_cluster() {
   if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
     ok "kind-кластер ${CLUSTER_NAME} уже есть"
@@ -116,36 +83,6 @@ ensure_cluster() {
   # kind говорит Ready раньше, чем API стабильно отвечает снаружи — ждём явно
   wait_for "API кластера отвечает на 127.0.0.1:6550" 180 kc get --raw /readyz
 
-  ensure_on_kind_network "$REGISTRY_NAME"
-
-  # containerd: оба имени registry → https://kind-registry:5000 без проверки сертификата
-  local node host dir
-  for node in $(kind get nodes --name "$CLUSTER_NAME"); do
-    for host in "$REGISTRY_INTERNAL" "127.0.0.1:${REGISTRY_HOST_PORT}" "localhost:${REGISTRY_HOST_PORT}"; do
-      dir="/etc/containerd/certs.d/${host}"
-      docker exec "$node" mkdir -p "$dir"
-      docker exec -i "$node" cp /dev/stdin "$dir/hosts.toml" <<EOF
-server = "https://${REGISTRY_INTERNAL}"
-
-[host."https://${REGISTRY_INTERNAL}"]
-  capabilities = ["pull", "resolve"]
-  skip_verify = true
-EOF
-    done
-  done
-
-  kc apply -f - >/dev/null <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: local-registry-hosting
-  namespace: kube-public
-data:
-  localRegistryHosting.v1: |
-    host: "127.0.0.1:${REGISTRY_HOST_PORT}"
-    hostFromClusterNetwork: "${REGISTRY_INTERNAL}"
-    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"
-EOF
   ok "кластер готов, контекст ${KUBE_CONTEXT}"
 }
 
@@ -269,32 +206,14 @@ wait_platform() {
   ok "платформа готова"
 }
 
-# Проверка с хоста — только чтобы не пересобирать лишний раз; если порт недоступен, просто соберём заново
-image_exists() { # app version
-  curl -fsk --max-time 5 "https://127.0.0.1:${REGISTRY_HOST_PORT}/v2/$1/tags/list" 2>/dev/null | grep -q "\"$2\""
-}
-
-build_initial_images() {
-  local app
-  for app in "${APPS[@]}"; do
-    if image_exists "$app" "$INITIAL_VERSION"; then
-      ok "образ ${app}:${INITIAL_VERSION} уже в registry"
-    else
-      "${SCRIPTS_DIR}/build-app.sh" "$app" "$INITIAL_VERSION"
-    fi
-  done
-}
-
 main() {
   check_prereqs
   tune_wsl
   check_ports
   ensure_repos
-  ensure_registry
   ensure_cluster
   export_windows_kubeconfig
   ensure_secrets
-  build_initial_images
   bootstrap_argocd
   wait_platform
   "${SCRIPTS_DIR}/status.sh"
