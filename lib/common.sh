@@ -93,6 +93,16 @@ windows_home() {
   wslpath -u "$win"
 }
 
+# Подключает контейнер к docker-сети kind, если он ещё не в ней.
+# Подключение может потеряться при перезапуске Docker Desktop / wsl --shutdown.
+ensure_on_kind_network() {
+  local c="$1"
+  if ! docker network inspect kind -f '{{range .Containers}}{{.Name}} {{end}}' | tr ' ' '\n' | grep -qx "$c"; then
+    log "Подключаю ${c} к docker-сети kind"
+    docker network connect kind "$c"
+  fi
+}
+
 # BuildKit-сборщик в docker-сети kind: пушит прямо в kind-registry:5000
 # (self-signed сертификат registry → insecure = без проверки TLS).
 ensure_builder() {
@@ -114,6 +124,24 @@ EOF
     --buildkitd-config "$cfg" \
     --bootstrap >/dev/null
   rm -f "$cfg"
+}
+
+# Контейнер, в котором работает buildkitd сборщика
+builder_container() { echo "buildx_buildkit_${BUILDER_NAME}0"; }
+
+# Проверяет, что сборщик видит registry по имени; иначе печатает диагностику
+check_builder_dns() {
+  local bc; bc="$(builder_container)"
+  ensure_on_kind_network "$REGISTRY_NAME"
+  ensure_on_kind_network "$bc"
+  # нечем проверить внутри образа — не мешаем, ошибка всплывёт при push
+  docker exec "$bc" sh -c 'command -v nslookup' >/dev/null 2>&1 || return 0
+  docker exec "$bc" nslookup "$REGISTRY_NAME" >/dev/null 2>&1 && return 0
+  warn "Сборщик ${bc} не резолвит ${REGISTRY_NAME}. Состояние сети kind:"
+  docker network inspect kind -f '{{range .Containers}}  {{.Name}} {{.IPv4Address}}{{"\n"}}{{end}}' >&2
+  warn "Сети сборщика: $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$bc")"
+  warn "Сети registry: $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$REGISTRY_NAME")"
+  die "Пришлите этот вывод — разберёмся"
 }
 
 remove_builder() {

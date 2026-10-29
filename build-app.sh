@@ -45,6 +45,7 @@ fi
 # по тому же имени, что и из кластера, — kind-registry:5000.
 docker network inspect kind >/dev/null 2>&1 || die "Нет docker-сети kind — сначала ./up.sh"
 ensure_builder
+check_builder_dns
 
 IMAGE="${REGISTRY_INTERNAL}/${APP}:${VERSION}"
 log "Собираю ${IMAGE} (color=${COLOR}, broken=${BROKEN})"

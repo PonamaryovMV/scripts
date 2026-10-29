@@ -116,9 +116,7 @@ ensure_cluster() {
   # kind говорит Ready раньше, чем API стабильно отвечает снаружи — ждём явно
   wait_for "API кластера отвечает на 127.0.0.1:6550" 180 kc get --raw /readyz
 
-  if [[ "$(docker inspect -f '{{json .NetworkSettings.Networks.kind}}' "$REGISTRY_NAME")" == "null" ]]; then
-    docker network connect kind "$REGISTRY_NAME"
-  fi
+  ensure_on_kind_network "$REGISTRY_NAME"
 
   # containerd: оба имени registry → https://kind-registry:5000 без проверки сертификата
   local node host dir
