@@ -96,12 +96,15 @@ API слушает `127.0.0.1:6550` — WSL2 пробрасывает этот �
 
 ## Устройство registry
 
-Один контейнер `kind-registry` с self-signed TLS:
+Один контейнер `kind-registry` (self-signed TLS) в docker-сети `kind`. Везде используется одно имя — **`kind-registry:5000/<app>`**:
 
-- с хоста: `docker push 127.0.0.1:5001/<app>:<tag>` (Docker считает 127.0.0.0/8 доверенным и не проверяет сертификат; именно `127.0.0.1`, а не `localhost` — Docker Desktop резолвит `localhost` в `::1`);
-- в кластере: `kind-registry:5000/<app>` — containerd настроен с `skip_verify`, Kargo Warehouse — с `insecureSkipTLSVerify`.
+- **сборка** — `build-app.sh` собирает и пушит через BuildKit-контейнер `gitops-stand-builder`, подключённый к сети `kind`.
+  Обычный `docker push` не подходит: в Docker Desktop демон живёт в своей VM и не видит порт registry, опубликованный на хосте;
+- **кластер** — containerd настроен на `kind-registry:5000` с `skip_verify`;
+- **Kargo** — Warehouse с `insecureSkipTLSVerify`.
 
 TLS нужен из-за Kargo: он ходит в registry по HTTP только для `localhost` и приватных IP, а имя `kind-registry` — ни то, ни другое.
+Порт `127.0.0.1:5001` на хосте — только посмотреть содержимое: `curl -k https://127.0.0.1:5001/v2/_catalog`.
 
 ## WSL: частые проблемы
 

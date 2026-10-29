@@ -39,12 +39,20 @@ if [[ -z "$COLOR" ]]; then
   COLOR="${palette[minor % ${#palette[@]}]}"
 fi
 
-IMAGE="127.0.0.1:${REGISTRY_HOST_PORT}/${APP}:${VERSION}"
+# Сборка и push идут через BuildKit-контейнер в docker-сети kind, а не через `docker push`:
+# в Docker Desktop демон живёт в своей VM и не видит порт registry, опубликованный на хосте
+# (localhost → ::1 timeout, 127.0.0.1 → connection refused). В сети kind registry доступен
+# по тому же имени, что и из кластера, — kind-registry:5000.
+docker network inspect kind >/dev/null 2>&1 || die "Нет docker-сети kind — сначала ./up.sh"
+ensure_builder
+
+IMAGE="${REGISTRY_INTERNAL}/${APP}:${VERSION}"
 log "Собираю ${IMAGE} (color=${COLOR}, broken=${BROKEN})"
-docker build -q -t "$IMAGE" \
+docker buildx build --builder "$BUILDER_NAME" --push --quiet \
+  --provenance=false --sbom=false \
+  -t "$IMAGE" \
   --build-arg APP_VERSION="$VERSION" \
   --build-arg APP_COLOR="$COLOR" \
   --build-arg APP_BROKEN="$BROKEN" \
   "$SRC" >/dev/null
-docker push -q "$IMAGE" >/dev/null
-ok "${IMAGE} запушен (в кластере: ${REGISTRY_INTERNAL}/${APP}:${VERSION})"
+ok "${IMAGE} запушен"

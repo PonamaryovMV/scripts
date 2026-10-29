@@ -30,12 +30,14 @@ fi
 : "${GITOPS_INFRA_DIR:=${WORKSPACE_DIR}/gitops-infra}"
 : "${GITOPS_MAIN_DIR:=${WORKSPACE_DIR}/gitops-main}"
 
-# Локальный registry: снаружи (docker push) — 127.0.0.1:5001 (не localhost: Docker Desktop резолвит его в ::1),
-# внутри кластера (containerd, Kargo) — kind-registry:5000.
+# Локальный registry. Везде используется одно имя — kind-registry:5000 (docker-сеть kind):
+# так его видят containerd, Kargo и BuildKit-сборщик. Порт на хосте (127.0.0.1:5001) —
+# только чтобы заглянуть в каталог с WSL/Windows: curl -k https://127.0.0.1:5001/v2/_catalog
 : "${REGISTRY_NAME:=kind-registry}"
 : "${REGISTRY_HOST_PORT:=5001}"
 : "${REGISTRY_INTERNAL:=${REGISTRY_NAME}:5000}"
 : "${REGISTRY_IMAGE:=registry:3}"
+: "${BUILDER_NAME:=${CLUSTER_NAME}-builder}"
 
 : "${KARGO_ADMIN_PASSWORD:=admin}"
 : "${STATE_DIR:=${HOME}/.local/share/${CLUSTER_NAME}}"
@@ -89,6 +91,33 @@ windows_home() {
   win="$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r' || true)"
   [[ -n "$win" && "$win" != *'%USERPROFILE%'* ]] || return 1
   wslpath -u "$win"
+}
+
+# BuildKit-сборщик в docker-сети kind: пушит прямо в kind-registry:5000
+# (self-signed сертификат registry → insecure = без проверки TLS).
+ensure_builder() {
+  if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+    # сеть kind могла быть пересоздана вместе с кластером — тогда сборщик битый
+    if docker buildx inspect --bootstrap "$BUILDER_NAME" >/dev/null 2>&1; then return 0; fi
+    docker buildx rm -f "$BUILDER_NAME" >/dev/null 2>&1 || true
+  fi
+  log "Создаю BuildKit-сборщик ${BUILDER_NAME} в сети kind"
+  local cfg
+  cfg="$(mktemp)"
+  cat > "$cfg" <<EOF
+[registry."${REGISTRY_INTERNAL}"]
+  insecure = true
+EOF
+  docker buildx create --name "$BUILDER_NAME" \
+    --driver docker-container \
+    --driver-opt network=kind \
+    --buildkitd-config "$cfg" \
+    --bootstrap >/dev/null
+  rm -f "$cfg"
+}
+
+remove_builder() {
+  docker buildx rm -f "$BUILDER_NAME" >/dev/null 2>&1 || true
 }
 
 # Ждёт, пока команда не завершится успешно (по умолчанию до 10 минут)

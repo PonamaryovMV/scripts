@@ -102,7 +102,7 @@ ensure_registry() {
       -e REGISTRY_STORAGE_DELETE_ENABLED=true \
       "$REGISTRY_IMAGE" >/dev/null
   fi
-  ok "registry: push → 127.0.0.1:${REGISTRY_HOST_PORT}, в кластере → ${REGISTRY_INTERNAL}"
+  ok "registry ${REGISTRY_INTERNAL} (с хоста для просмотра: https://127.0.0.1:${REGISTRY_HOST_PORT})"
 }
 
 ensure_cluster() {
@@ -271,8 +271,9 @@ wait_platform() {
   ok "платформа готова"
 }
 
+# Проверка с хоста — только чтобы не пересобирать лишний раз; если порт недоступен, просто соберём заново
 image_exists() { # app version
-  curl -fsk "https://127.0.0.1:${REGISTRY_HOST_PORT}/v2/$1/tags/list" 2>/dev/null | grep -q "\"$2\""
+  curl -fsk --max-time 5 "https://127.0.0.1:${REGISTRY_HOST_PORT}/v2/$1/tags/list" 2>/dev/null | grep -q "\"$2\""
 }
 
 build_initial_images() {

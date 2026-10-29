@@ -19,6 +19,8 @@ if is_wsl && [[ "$WINDOWS_KUBECONFIG" != "off" ]] && winhome="$(windows_home)"; 
   ok "контекст ${KUBE_CONTEXT} убран из kubeconfig Windows"
 fi
 
+remove_builder
+
 if $PURGE; then
   docker rm -f "$REGISTRY_NAME" >/dev/null 2>&1 || true
   docker volume rm "${CLUSTER_NAME}-registry-data" >/dev/null 2>&1 || true
