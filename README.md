@@ -29,9 +29,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\up.ps1
 
 | Что | Адрес | Логин |
 |---|---|---|
-| Argo CD | http://argocd | `admin` / пароль печатает `up.ps1` |
-| Kargo | http://kargo | `admin` / `admin` |
-| Jenkins | http://jenkins | `admin` / пароль печатает `up.ps1` |
+| Argo CD | http://argocd | `admin` / `123` |
+| Kargo | http://kargo | `admin` / `123` |
+| Jenkins | http://jenkins | `admin` / `123` |
 | Сервисы ФП | http://qa-at-&lt;mgmt\|core\|api&gt;-&lt;dev\|test\|uat\|prod&gt; | — |
 
 Если адреса не открываются, а в системе включён прокси — добавьте эти имена в исключения прокси.

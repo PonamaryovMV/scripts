@@ -17,7 +17,8 @@
 [CmdletBinding()]
 param(
   [string]$ClusterName = "gitops-stand",
-  [string]$KargoPassword = "admin"
+  # Один пароль admin для Argo CD, Kargo и Jenkins (стенд!)
+  [string]$AdminPassword = "123"
 )
 
 $ErrorActionPreference = "Continue"   # ошибки нативных команд проверяем по exit code сами
@@ -140,14 +141,31 @@ function New-Cluster {
   }
   if ($exists) {
     Ok "kind-кластер $ClusterName уже есть"
-    Run kind export kubeconfig --name $ClusterName
   } else {
     Test-Ports
     Step "Создаю kind-кластер $ClusterName"
     Run kind create cluster --name $ClusterName --config $KindConfig --wait 180s
   }
   Wait-Until "API кластера отвечает" 180 { Test-Cmd kubectl --context $Context get --raw /readyz }
-  Ok "контекст $Context в $env:USERPROFILE\.kube\config — Lens увидит его сам"
+  Update-Kubeconfig
+}
+
+# Свежий контекст kind-<кластер> в %USERPROFILE%\.kube\config (его подхватывает Lens) и уборка старых файлов.
+# После пересоздания кластера у него новые сертификаты: старые записи дают в Lens ошибку подключения.
+function Update-Kubeconfig {
+  $kubeDir = Join-Path $env:USERPROFILE ".kube"
+  $stale = Join-Path $kubeDir "$ClusterName.yaml"   # отдельный файл от старой WSL-версии стенда
+  if (Test-Path $stale) {
+    Remove-Item $stale -Force
+    Warn "удалён устаревший $stale — если он был добавлен в Lens, уберите его там (Remove)"
+  }
+  # перезаписываем контекст целиком: старые cluster/user с прежними сертификатами удаляются
+  & kubectl config delete-context $Context *> $null
+  & kubectl config delete-cluster $Context *> $null
+  & kubectl config delete-user $Context *> $null
+  Run kind export kubeconfig --name $ClusterName
+  Wait-Until "kubeconfig рабочий" 60 { Test-Cmd kubectl --context $Context get --raw /readyz }
+  Ok "контекст $Context в $kubeDir\config обновлён — в Lens: Catalog → Clusters → $Context (если висит старый, Disconnect/Connect)"
 }
 
 function Get-BcryptHash([string]$Password) {
@@ -166,10 +184,12 @@ function Set-Secrets {
   $nsYaml += "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: $FpProject`n  labels:`n    kargo.akuity.io/project: `"true`"`n"
   $nsYaml | kubectl --context $Context apply -f - | Out-Null
 
-  # admin Kargo: хэш пароля + ключ подписи токенов (в публичный git не кладём)
-  if (-not (Test-Cmd kubectl --context $Context -n kargo get secret kargo-api)) {
-    Step "Создаю секрет kargo-api (admin / $KargoPassword)"
-    $hash = Get-BcryptHash $KargoPassword
+  # admin Kargo: хэш пароля + ключ подписи токенов. Пересоздаём, если пароль поменялся.
+  $sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($AdminPassword))).Replace("-", "").ToLower().Substring(0, 16)
+  $cur = & kubectl --context $Context -n kargo get secret kargo-api -o "jsonpath={.metadata.annotations.stand/password-sha}" 2>$null
+  if ($cur -ne $sha) {
+    Step "Секрет kargo-api: admin / $AdminPassword"
+    $hash = Get-BcryptHash $AdminPassword
     $key = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 48 | ForEach-Object { [char]$_ })
     $yaml = @"
 apiVersion: v1
@@ -177,12 +197,17 @@ kind: Secret
 metadata:
   name: kargo-api
   namespace: kargo
+  annotations:
+    stand/password-sha: '$sha'
 stringData:
   ADMIN_ACCOUNT_PASSWORD_HASH: '$hash'
   ADMIN_ACCOUNT_TOKEN_SIGNING_KEY: '$key'
 "@
     $yaml | kubectl --context $Context apply -f - | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет kargo-api" }
+    if (Test-Cmd kubectl --context $Context -n kargo get deploy kargo-api) {
+      Kc -n kargo rollout restart deploy kargo-api | Out-Null
+    }
   }
   Ok "секрет kargo/kargo-api"
 
@@ -298,6 +323,22 @@ function Install-ArgoCD {
   Kc -n argocd rollout status deploy/argocd-server --timeout=900s | Out-Null
   Kc -n argocd rollout status deploy/argocd-repo-server --timeout=900s | Out-Null
   Ok "Argo CD запущен — дальше всё синкается из git"
+  Set-ArgoCDPassword
+}
+
+function Set-ArgoCDPassword {
+  $sha = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($AdminPassword))).Replace("-", "").ToLower().Substring(0, 16)
+  $cur = & kubectl --context $Context -n argocd get secret argocd-secret -o "jsonpath={.metadata.annotations.stand/password-sha}" 2>$null
+  if ($cur -eq $sha) { Ok "Argo CD: admin / $AdminPassword"; return }
+  $hash = Get-BcryptHash $AdminPassword
+  $mtime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  $patch = Join-Path $env:TEMP "argocd-admin-patch.json"
+  $json = '{"metadata":{"annotations":{"stand/password-sha":"' + $sha + '"}},"stringData":{"admin.password":"' + $hash + '","admin.passwordMtime":"' + $mtime + '"}}'
+  [IO.File]::WriteAllText($patch, $json, (New-Object System.Text.UTF8Encoding $false))
+  Kc -n argocd patch secret argocd-secret --type merge --patch-file $patch | Out-Null
+  Remove-Item $patch -Force
+  & kubectl --context $Context -n argocd delete secret argocd-initial-admin-secret --ignore-not-found *> $null
+  Ok "Argo CD: admin / $AdminPassword"
 }
 
 function Wait-Platform {
@@ -321,16 +362,12 @@ function Wait-Platform {
 }
 
 function Show-Status {
-  $pass = & kubectl --context $Context -n argocd get secret argocd-initial-admin-secret -o "jsonpath={.data.password}" 2>$null
-  if ($pass) { $pass = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pass)) } else { $pass = "<ещё не создан>" }
   Write-Host ""
   Write-Host "Стенд $ClusterName  (kubectl context: $Context)" -ForegroundColor Green
   Write-Host ""
-  Write-Host "  Argo CD    http://argocd    admin / $pass"
-  Write-Host "  Kargo      http://kargo     admin / $KargoPassword"
-  $jPass = & kubectl --context $Context -n jenkins get secret jenkins -o "jsonpath={.data.jenkins-admin-password}" 2>$null
-  if ($jPass) { $jPass = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($jPass)) } else { $jPass = "<Jenkins ещё ставится>" }
-  Write-Host "  Jenkins    http://jenkins   admin / $jPass   (джобы: qa-at/BuildRelease, ExcludeService, DAST)"
+  Write-Host "  Argo CD    http://argocd    admin / $AdminPassword"
+  Write-Host "  Kargo      http://kargo     admin / $AdminPassword"
+  Write-Host "  Jenkins    http://jenkins   admin / $AdminPassword   (джобы: qa-at/BuildRelease, ExcludeService, DAST)"
   Write-Host ""
   Write-Host "  Сервисы ФП qa/at:  http://qa-at-<mgmt|core|api>-<dev|test|uat|prod>   например http://qa-at-mgmt-uat"
   Write-Host ""
