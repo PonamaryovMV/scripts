@@ -1,15 +1,17 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Поднимает GitOps-стенд на Windows: kind-кластер + Argo CD.
-  Остальное (cert-manager, Argo Rollouts, Kargo, приложения) Argo CD синкает из git сам.
+  Поднимает GitOps-стенд на Windows: kind-кластер + Argo CD + записи в hosts.
+  Остальное (Traefik, cert-manager, Argo Rollouts, Kargo, Jenkins, сервисы ФП qa/at) Argo CD синкает из git сам.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\up.ps1
 
 .NOTES
   Нужен Docker Desktop. kind и kubectl скачиваются в .\bin рядом с папкой scripts.
-  GITHUB_TOKEN (fine-grained PAT, Contents: RW на gitops-main) — в scripts\.env или в переменной окружения.
+  GITHUB_TOKEN (classic PAT, scope repo) — в scripts\.env или в переменной окружения:
+  Kargo и Jenkins пишут им в gitops-main и gitops-prod.
+  Для правки hosts скрипт один раз попросит права администратора (UAC).
   Повторный запуск безопасен.
 #>
 [CmdletBinding()]
@@ -30,6 +32,11 @@ $ScriptsDir     = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $StandDir       = Split-Path -Parent $ScriptsDir
 $BinDir         = Join-Path $StandDir "bin"
 $Context        = "kind-$ClusterName"
+$FpProject      = "qa-at"
+$Services       = @("mgmt", "core", "api")
+$Environments   = @("dev", "test", "uat", "prod")
+# Имена в hosts: UI платформы + сервисы ФП http://qa-at-<сервис>-<окружение>
+$HostNames      = @("argocd", "kargo", "jenkins") + @(foreach ($s in $Services) { foreach ($e in $Environments) { "$FpProject-$s-$e" } })
 
 # ---------------- вывод ----------------
 function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -101,7 +108,7 @@ function Install-Tools {
 }
 
 function Test-Ports {
-  $ports = @(6550, 8080, 8081, 8090, 8101, 8102, 8103, 8111, 8112, 8113)
+  $ports = @(80, 6550)
   $busy = @()
   foreach ($p in $ports) {
     $c = Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -112,7 +119,7 @@ function Test-Ports {
   }
   if ($busy.Count) {
     $busy | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
-    Fail "Порты заняты (часто это контейнеры Docker: docker ps). Освободите их и запустите снова."
+    Fail "Порты заняты (80 часто держит IIS/Skype/другой контейнер: docker ps). Освободите их и запустите снова."
   }
 }
 
@@ -123,6 +130,10 @@ function New-Cluster {
     $running = & docker inspect -f "{{.State.Running}}" "$ClusterName-control-plane" 2>$null
     if ($running -ne "true") {
       Warn "Нода кластера $ClusterName остановлена (перезапуск Docker Desktop?) — пересоздаю кластер"
+      Run kind delete cluster --name $ClusterName
+      $exists = $false
+    } elseif (-not ((& docker port "$ClusterName-control-plane" 2>$null) -match "^30000/tcp")) {
+      Warn "Кластер $ClusterName создан со старой схемой портов (нужен 80 → Traefik) — пересоздаю"
       Run kind delete cluster --name $ClusterName
       $exists = $false
     }
@@ -151,6 +162,8 @@ function Set-Secrets {
   foreach ($ns in "kargo", "kargo-shared-resources", "jenkins") {
     $nsYaml += "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: $ns`n---`n"
   }
+  # неймспейс Kargo-проекта создаём заранее (с меткой — Kargo его примет), чтобы положить секрет для DAST
+  $nsYaml += "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: $FpProject`n  labels:`n    kargo.akuity.io/project: `"true`"`n"
   $nsYaml | kubectl --context $Context apply -f - | Out-Null
 
   # admin Kargo: хэш пароля + ключ подписи токенов (в публичный git не кладём)
@@ -173,31 +186,33 @@ stringData:
   }
   Ok "секрет kargo/kargo-api"
 
-  # доступ Kargo на запись в gitops-main
+  # доступ Kargo на запись в gitops-main (окружения dev/test/uat) и gitops-prod (prod)
   if ($env:GITHUB_TOKEN) {
     $user = if ($env:GITHUB_USER) { $env:GITHUB_USER } else { $GithubOwner }
-    $yaml = @"
+    foreach ($repo in "gitops-main", "gitops-prod") {
+      $yaml = @"
 apiVersion: v1
 kind: Secret
 metadata:
-  name: github-creds
+  name: github-$repo
   namespace: kargo-shared-resources
   labels:
     kargo.akuity.io/cred-type: git
 stringData:
-  repoURL: 'https://github.com/$GithubOwner/gitops-main.git'
+  repoURL: 'https://github.com/$GithubOwner/$repo.git'
   username: '$user'
   password: '$($env:GITHUB_TOKEN)'
 "@
-    $yaml | kubectl --context $Context apply -f - | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет github-creds" }
-    if (-not (Test-Cmd kubectl --context $Context -n kargo-shared-resources get secret github-creds)) { Fail "Секрет github-creds не появился" }
-    Ok "секрет kargo-shared-resources/github-creds (доступ на запись в gitops-main)"
+      $yaml | kubectl --context $Context apply -f - | Out-Null
+      if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет github-$repo" }
+    }
+    & kubectl --context $Context -n kargo-shared-resources delete secret github-creds --ignore-not-found *> $null
+    Ok "секреты Kargo для записи в gitops-main и gitops-prod"
   } else {
-    Warn "GITHUB_TOKEN не задан (scripts\.env) — Kargo не сможет коммитить в gitops-main"
+    Warn "GITHUB_TOKEN не задан (scripts\.env) — Kargo и Jenkins не смогут писать в git"
   }
 
-  # Токен для Jenkins (стадия Publish запускает сборку в GitHub Actions).
+  # GitHub-токен для Jenkins (BuildRelease / ExcludeService пишут в git).
   # Секрет нужен всегда: без него под Jenkins не стартует (смонтирован в JCasC).
   $jToken = if ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "not-set" }
   $yaml = @"
@@ -212,6 +227,56 @@ stringData:
   $yaml | kubectl --context $Context apply -f - | Out-Null
   if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет jenkins-github" }
   Ok "секрет jenkins/jenkins-github"
+
+  # Учётка kargo в Jenkins: Kargo (верификация uat) запускает джобу DAST и читает её статус.
+  # Пароль один и тот же в jenkins (JCasC) и в неймспейсе проекта (Job верификации).
+  $kp = & kubectl --context $Context -n jenkins get secret jenkins-kargo -o "jsonpath={.data.password}" 2>$null
+  if ($kp) { $kp = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($kp)) }
+  else { $kp = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ }) }
+  foreach ($ns in "jenkins", $FpProject) {
+    $yaml = @"
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jenkins-kargo
+  namespace: $ns
+stringData:
+  password: '$kp'
+"@
+    $yaml | kubectl --context $Context apply -f - | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "Не удалось создать секрет $ns/jenkins-kargo" }
+  }
+  Ok "учётка kargo в Jenkins (секрет jenkins-kargo)"
+}
+
+function Test-Admin {
+  $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+  return ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Update-Hosts {
+  $hostsFile = Join-Path $env:SystemRoot "System32\drivers\etc\hosts"
+  $current = Get-Content $hostsFile -ErrorAction SilentlyContinue
+  $missing = @($HostNames | Where-Object { $n = $_; -not ($current | Where-Object { $_ -match "^\s*127\.0\.0\.1\s+$([regex]::Escape($n))(\s|$)" }) })
+  if ($missing.Count -eq 0) { Ok "hosts: имена стенда уже прописаны"; return }
+
+  $script = Join-Path $PSScriptRoot "hosts.ps1"
+  $names = $HostNames -join ","
+  if (Test-Admin) {
+    & $script -Names $names
+  } else {
+    Step "Добавляю имена в hosts — подтвердите запрос прав администратора (UAC)"
+    try {
+      $p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -Names $names"
+      if ($p.ExitCode -ne 0) { throw "exit $($p.ExitCode)" }
+    } catch {
+      Warn "hosts не изменён ($_). Запустите вручную от администратора:"
+      Warn "  powershell -ExecutionPolicy Bypass -File `"$script`" -Names $names"
+      return
+    }
+  }
+  Ok "hosts: $($HostNames.Count) имён → 127.0.0.1 (argocd, kargo, jenkins, qa-at-<сервис>-<окружение>)"
 }
 
 function Install-ArgoCD {
@@ -236,7 +301,7 @@ function Install-ArgoCD {
 }
 
 function Wait-Platform {
-  Step "Жду платформу (cert-manager → Argo Rollouts → Kargo), первый запуск ~3-7 мин"
+  Step "Жду платформу (Traefik, cert-manager, Argo Rollouts, Kargo, Jenkins), первый запуск ~5-10 мин"
   Wait-Until "CRD Argo Rollouts" 900 { Test-Cmd kubectl --context $Context get crd analysisruns.argoproj.io }
   Wait-Until "Kargo API"        900 { Test-Cmd kubectl --context $Context -n kargo rollout status deploy/kargo-api --timeout=5s }
   Wait-Until "Kargo controller" 900 { Test-Cmd kubectl --context $Context -n kargo rollout status deploy/kargo-controller --timeout=5s }
@@ -261,19 +326,13 @@ function Show-Status {
   Write-Host ""
   Write-Host "Стенд $ClusterName  (kubectl context: $Context)" -ForegroundColor Green
   Write-Host ""
-  Write-Host "  Argo CD    http://localhost:8080   admin / $pass"
-  Write-Host "  Kargo      http://localhost:8081   admin / $KargoPassword"
+  Write-Host "  Argo CD    http://argocd    admin / $pass"
+  Write-Host "  Kargo      http://kargo     admin / $KargoPassword"
   $jPass = & kubectl --context $Context -n jenkins get secret jenkins -o "jsonpath={.data.jenkins-admin-password}" 2>$null
   if ($jPass) { $jPass = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($jPass)) } else { $jPass = "<Jenkins ещё ставится>" }
-  $mapped = (& docker port "$ClusterName-control-plane" 2>$null) -match "30090"
-  if ($mapped) {
-    Write-Host "  Jenkins    http://localhost:8090   admin / $jPass"
-  } else {
-    Write-Host "  Jenkins    kubectl -n jenkins port-forward svc/jenkins 8090:8080  → http://localhost:8090   admin / $jPass"
-    Write-Host "             (кластер создан до добавления порта 8090; после down.ps1 + up.ps1 откроется напрямую)" -ForegroundColor DarkGray
-  }
-  Write-Host "  hello-api  dev :8101  stage :8102  prod :8103"
-  Write-Host "  color-web  dev :8111  stage :8112  prod :8113"
+  Write-Host "  Jenkins    http://jenkins   admin / $jPass   (джобы: qa-at/BuildRelease, ExcludeService, DAST)"
+  Write-Host ""
+  Write-Host "  Сервисы ФП qa/at:  http://qa-at-<mgmt|core|api>-<dev|test|uat|prod>   например http://qa-at-mgmt-uat"
   Write-Host ""
   & kubectl --context $Context -n argocd get applications.argoproj.io `
     -o "custom-columns=NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status"
@@ -285,6 +344,7 @@ Test-Docker
 Install-Tools
 New-Cluster
 Set-Secrets
+Update-Hosts
 Install-ArgoCD
 Wait-Platform
 Show-Status

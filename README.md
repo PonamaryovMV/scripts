@@ -1,85 +1,52 @@
-# scripts — запуск GitOps-стенда
+# scripts — запуск GitOps-стенда (Windows)
 
-Локальный стенд на kind: **Argo CD 3.6 (RC)** + **Argo Rollouts** + **Kargo** + два тестовых приложения на Python.
-Скрипт поднимает кластер и ставит только Argo CD — всё остальное Argo CD синкает из git.
+Стенд на kind: **Argo CD 3.6 (RC)**, **Kargo**, **Jenkins**, **Argo Rollouts**, **Traefik** и ФП `qa/at` из трёх сервисов.
+`up.ps1` поднимает кластер и ставит Argo CD — всё остальное Argo CD синкает из git.
 
 | Репозиторий | Что внутри |
 |---|---|
-| [`scripts`](https://github.com/PonamaryovMV/scripts) | этот репозиторий: запуск kind + bootstrap Argo CD |
-| [`infra`](https://github.com/PonamaryovMV/infra) | Argo CD (управляет сам собой) + ApplicationSet'ы |
-| [`gitops-infra`](https://github.com/PonamaryovMV/gitops-infra) | cert-manager, Argo Rollouts, Kargo (Helm + values) |
-| [`gitops-main`](https://github.com/PonamaryovMV/gitops-main) | приложения: исходники, CI-сборка в ghcr.io, манифесты dev/stage/prod, Kargo-пайплайны |
+| [scripts](https://github.com/PonamaryovMV/scripts) | `windows/up.ps1`, `down.ps1`, `hosts.ps1`, конфиг kind |
+| [infra](https://github.com/PonamaryovMV/infra) | Argo CD (управляет сам собой) + ApplicationSet'ы |
+| [gitops-infra](https://github.com/PonamaryovMV/gitops-infra) | Traefik, cert-manager, Argo Rollouts, Kargo, Jenkins + общий чарт `main` |
+| [gitops-main](https://github.com/PonamaryovMV/gitops-main) | ФП `qa/at`: dev, test, uat; ветка ФП `qa-at`; Kargo-проект |
+| [gitops-prod](https://github.com/PonamaryovMV/gitops-prod) | ФП `qa/at`: prod; файл срочных исключений |
+| [jenkins](https://github.com/PonamaryovMV/jenkins) | BuildRelease, ExcludeService, DAST |
 
-```
-up.ps1 ─▶ kind ─▶ Argo CD (infra/argocd)
-                    ├─ AppSet platform        ─▶ gitops-infra/components/*   (cert-manager, rollouts, kargo)
-                    ├─ AppSet workloads       ─▶ gitops-main/apps/*/envs/*   (<app>-dev|stage|prod)
-                    └─ AppSet kargo-pipelines ─▶ gitops-main/apps/*/kargo    (Project, Warehouse, Stages)
+## Запуск
 
-git tag hello-api/v1.1.0 ─▶ GitHub Actions ─▶ ghcr.io ─▶ Kargo Warehouse ─▶ dev → stage → prod
-```
-
-## Версии
-
-| Компонент | Версия |
-|---|---|
-| kind / Kubernetes | v0.33.0 / v1.37.0 |
-| Argo CD | **v3.6.0-rc4** |
-| Argo Rollouts | v1.10.1 (chart 2.43.8) + rollout-extension v0.4.1 |
-| Kargo | v1.12.5 |
-| cert-manager | v1.21.3 |
-
-## Запуск на Windows
-
-Нужен только **Docker Desktop**. kind и kubectl скрипт скачает сам в `..\bin`.
+Нужен **Docker Desktop**. kind и kubectl скрипт скачает сам в `..\bin`.
 
 ```powershell
 cd C:\Users\ponam\stend
-git clone https://github.com/PonamaryovMV/scripts.git     # или скачайте zip
-copy scripts\.env.example scripts\.env                    # впишите GITHUB_TOKEN
+git -C scripts pull
+# scripts\.env:  GITHUB_TOKEN=ghp_...   (classic PAT, scope repo)
 powershell -ExecutionPolicy Bypass -File .\scripts\windows\up.ps1
 ```
 
-`GITHUB_TOKEN` — fine-grained PAT с правом **Contents: Read and write** только на `gitops-main`.
-Нужен Kargo, чтобы коммитить новые теги образов. Без него всё поднимется, но промоушены упадут.
-
-Первый запуск ~5–10 минут. Повторный запуск безопасен. Кластер сразу виден в **Lens** — kind пишет
-контекст `kind-gitops-stand` в `%USERPROFILE%\.kube\config`.
+- Скрипт один раз попросит **права администратора (UAC)** — чтобы прописать имена в `hosts`.
+- Нужен свободный **порт 80** на 127.0.0.1. Если кластер был создан старой схемой портов, скрипт пересоздаст его сам.
+- Первый запуск ~10 минут (образы платформы и Jenkins с плагинами).
 
 | Что | Адрес | Логин |
 |---|---|---|
-| Argo CD | http://localhost:8080 | `admin` / пароль печатает `up.ps1` |
-| Kargo | http://localhost:8081 | `admin` / `admin` |
-| Jenkins | http://localhost:8090 | `admin` / пароль печатает `up.ps1` |
-| hello-api | dev :8101 · stage :8102 · prod :8103 | |
-| color-web | dev :8111 · stage :8112 · prod :8113 | |
+| Argo CD | http://argocd | `admin` / пароль печатает `up.ps1` |
+| Kargo | http://kargo | `admin` / `admin` |
+| Jenkins | http://jenkins | `admin` / пароль печатает `up.ps1` |
+| Сервисы ФП | http://qa-at-&lt;mgmt\|core\|api&gt;-&lt;dev\|test\|uat\|prod&gt; | — |
 
-Остановить: `powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1`
-(`-CleanupWsl` — заодно удалить остатки старой WSL-версии: локальный registry и сборщик).
+Если адреса не открываются, а в системе включён прокси — добавьте эти имена в исключения прокси.
 
-## Запуск из WSL / Linux
+## Сценарий
 
-Те же шаги в bash: `./install-tools.sh`, `cp .env.example .env`, `./up.sh`, `./down.sh`.
-Скрипт дополнительно добавляет контекст в kubeconfig Windows (для Lens).
-С Docker Desktop не включайте `networkingMode=mirrored` в `.wslconfig` — TLS к API kind из WSL зависает.
+1. **Jenkins → qa-at/BuildRelease**: `TASK-2`, `VERSION=release-2-102`, все сервисы. SCA и SAST → Quality Gate → один коммит в ветку `qa-at`.
+2. **Kargo → проект qa-at**: появился Freight. Promote в `dev` → `test` → `uat`.
+3. На `uat` Kargo запускает **Jenkins qa-at/DAST** и ждёт статус. После успеха Freight можно продвинуть в `prod`.
+4. Откройте http://qa-at-mgmt-uat — версия и цвет релиза.
+5. Исключение сервиса — **qa-at/ExcludeService** (`planned` / `urgent` / `clear`), см. README репозитория jenkins.
 
-## Новая версия приложения
+## Остановка
 
-Образы собирает GitHub Actions в `gitops-main` и пушит в `ghcr.io/ponamaryovmv/<app>`:
-
-```bash
-git tag hello-api/v1.1.0 && git push origin hello-api/v1.1.0
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1                 # удалить кластер
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1 -CleanupHosts   # + убрать имена из hosts
 ```
-
-Сломанная сборка (проверка отката canary) или свой цвет — в `gitops-main`: **Actions → build → Run workflow**.
-
-> После первой сборки сделайте пакеты публичными, иначе кластер не скачает образы:
-> GitHub → профиль → **Packages** → `hello-api` / `color-web` → **Package settings → Change visibility → Public**.
-
-Что происходит дальше:
-
-1. Kargo Warehouse (опрос раз в 30с) видит тег `1.1.0` в ghcr → Freight.
-2. Стейдж `dev` (auto-promotion) меняет `newTag` в `gitops-main/apps/<app>/envs/dev`, коммитит в `main`, синкает `<app>-dev`.
-3. Argo Rollouts катит canary: 50% → пауза 15с → анализ `/health` canary-подов → 100%.
-4. Kargo проверяет, что стейдж отдаёт новую версию (`/version`) → Freight verified → `stage`.
-5. `prod` — вручную: Kargo UI → Promote.

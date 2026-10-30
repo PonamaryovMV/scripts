@@ -5,12 +5,14 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1
-  powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1 -CleanupWsl   # + остатки WSL-версии стенда
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1 -CleanupWsl    # + остатки WSL-версии стенда
+  powershell -ExecutionPolicy Bypass -File .\scripts\windows\down.ps1 -CleanupHosts  # + убрать имена стенда из hosts (UAC)
 #>
 [CmdletBinding()]
 param(
   [string]$ClusterName = "gitops-stand",
-  [switch]$CleanupWsl
+  [switch]$CleanupWsl,
+  [switch]$CleanupHosts
 )
 
 $ErrorActionPreference = "Continue"
@@ -29,4 +31,10 @@ if ($CleanupWsl) {
   & docker rm -f kind-registry "buildx_buildkit_$ClusterName-builder0" *> $null
   & docker volume rm "$ClusterName-registry-data" *> $null
   Write-Host " OK  остатки WSL-версии удалены" -ForegroundColor Green
+}
+
+if ($CleanupHosts) {
+  $script = Join-Path $PSScriptRoot "hosts.ps1"
+  Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script`" -Remove"
+  Write-Host " OK  имена стенда убраны из hosts" -ForegroundColor Green
 }
