@@ -168,6 +168,19 @@ function Update-Kubeconfig {
   Ok "контекст $Context в $kubeDir\config обновлён — в Lens: Catalog → Clusters → $Context (если висит старый, Disconnect/Connect)"
 }
 
+# Фоном подтягиваем в ноду kind тяжёлые образы агентов Jenkins, чтобы первая сборка не ждала их минутами
+function Start-ImagePrefetch {
+  $images = @(
+    "docker.io/jenkins/inbound-agent:3395.v6e5377b_0fb_3c-2-jdk25",
+    "ghcr.io/ponamaryovmv/jenkins-agent-python:1",
+    "docker.io/library/python:3.14-slim"
+  )
+  foreach ($img in $images) {
+    Start-Process docker -WindowStyle Hidden -ArgumentList "exec $ClusterName-control-plane crictl pull $img" | Out-Null
+  }
+  Ok "образы агентов Jenkins подтягиваются в фоне"
+}
+
 function Get-BcryptHash([string]$Password) {
   # htpasswd из официального образа httpd; пустой логин PowerShell 5.1 не передаёт, поэтому admin: и отрезаем
   $line = & docker run --rm httpd:2.4-alpine htpasswd -nbB -C 10 admin $Password
@@ -380,6 +393,7 @@ Import-DotEnv
 Test-Docker
 Install-Tools
 New-Cluster
+Start-ImagePrefetch
 Set-Secrets
 Update-Hosts
 Install-ArgoCD
