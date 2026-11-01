@@ -44,6 +44,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows\up.ps1
 4. Откройте http://qa-at-mgmt-uat — версия и цвет релиза.
 5. Исключение сервиса — **qa-at/ExcludeService** (`planned` / `urgent` / `clear`), см. README репозитория jenkins.
 
+Как всё устроено (репозитории, Argo CD, Kargo, Jenkins, флоу релиза, исключения) — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Остановка
 
 ```powershell
